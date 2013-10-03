@@ -32,10 +32,8 @@
  */
 package thredds.util;
 
-import ucar.nc2.util.net.HTTPException;
-import ucar.nc2.util.net.HTTPMethod;
-import ucar.nc2.util.net.HTTPSession;
-import org.apache.commons.httpclient.Header;
+import ucar.nc2.util.net.*;
+import org.apache.http.Header;
 
 import java.io.*;
 import java.net.URI;
@@ -163,7 +161,7 @@ public class HttpUriResolver
   private HTTPMethod getHttpResponse( URI uri )
           throws IOException, HTTPException
   {
-    HTTPMethod method = HTTPMethod.Get(uri.toString() );
+    HTTPMethod method = HTTPFactory.Get(uri.toString());
     method.getSession().setConnectionTimeout( this.connectionTimeout );
     method.getSession().setSoTimeout( this.socketTimeout );
     method.setFollowRedirects( this.followRedirects );
