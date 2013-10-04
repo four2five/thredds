@@ -34,7 +34,7 @@ package thredds.tdm;
 
 import org.apache.http.auth.*;
 import org.apache.http.client.CredentialsProvider;
-import org.apache.log4j.*;
+import org.apache.logging.log4j.*;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.support.FileSystemXmlApplicationContext;
 import org.springframework.core.io.FileSystemResource;
