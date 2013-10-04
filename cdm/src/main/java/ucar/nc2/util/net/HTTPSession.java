@@ -34,13 +34,24 @@
 package ucar.nc2.util.net;
 
 import net.jcip.annotations.NotThreadSafe;
-import org.apache.commons.httpclient.*;
-import org.apache.commons.httpclient.auth.CredentialsProvider;
-import org.apache.commons.httpclient.params.*;
-import org.apache.commons.httpclient.protocol.Protocol;
+import org.apache.http.*;
+import org.apache.http.auth.Credentials;
+import org.apache.http.client.CredentialsProvider;
+import org.apache.http.client.params.AllClientPNames;
+import org.apache.http.conn.params.ConnRoutePNames;
+import org.apache.http.conn.scheme.Scheme;
+import org.apache.http.cookie.Cookie;
+import org.apache.http.impl.client.AbstractHttpClient;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.impl.conn.PoolingClientConnectionManager;
+import org.apache.http.params.*;
+import org.apache.http.protocol.ExecutionContext;
+import org.apache.http.protocol.HttpContext;
 
-import java.net.MalformedURLException;
-import java.net.URL;
+import javax.net.ssl.SSLException;
+import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.net.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Vector;
@@ -57,23 +68,23 @@ import java.util.Vector;
  * A Session does, however, encapsulate an instance of an Apache HttpClient.
  * <p/>
  * It is possible to specify a url when invoking, for example,
- * HTTPMethod.Get.  This is because the url argument to the
+ * HTTPFactory.Get.  This is because the url argument to the
  * HTTPSession constructor actually serves two purposes.  First, if
  * the method is created without specifying a url, then the session
  * url is used to specify the data to be retrieved by the method
  * invocation.  Second, if the method is created and specifies a
- * url, for example, HTTPMethod m = HTTPMethod.Get(session,url2);
+ * url, for example, HTTPMethod m = HTTPFactory.Get(session,url2);
  * this second url is used to specify the data to be retrieved by
  * the method invocation.  This might (and does) occur if, for
  * example, the url given to HTTPSession represented some general
  * url such as http://motherlode.ucar.edu/path/file.nc and the url
- * given to HTTPMethod.Get was for something more specific such as
+ * given to HTTPFactory.Get was for something more specific such as
  * http://motherlode.ucar.edu/path/file.nc.dds.
  * <p/>
  * The important point is that in this second method, the url must
  * be "compatible" with the session url.  The term "compatible"
  * basically means that the HTTPSession url, as a string, must be a
- * prefix of the url given to HTTPMethod.Get. This maintains the
+ * prefix of the url given to HTTPFactory.Get. This maintains the
  * semantics of the Session but allows flexibility in accessing data
  * from the server.
  * <p/>
@@ -101,17 +112,17 @@ public class HTTPSession
     static public int SC_UNAUTHORIZED = HttpStatus.SC_UNAUTHORIZED;
     static public int SC_OK = HttpStatus.SC_OK;
     static public String CONNECTION_TIMEOUT = HttpConnectionParams.CONNECTION_TIMEOUT;
-    static public String SO_TIMEOUT = HttpMethodParams.SO_TIMEOUT;
+    static public String SO_TIMEOUT = AllClientPNames.SO_TIMEOUT;
 
-    static public String ALLOW_CIRCULAR_REDIRECTS = HttpClientParams.ALLOW_CIRCULAR_REDIRECTS;
-    static public String MAX_REDIRECTS = HttpClientParams.MAX_REDIRECTS;
-    static public String USER_AGENT = HttpMethodParams.USER_AGENT;
-    static public String PROTOCOL_VERSION = HttpMethodParams.PROTOCOL_VERSION;
-    static public String VIRTUAL_HOST = HttpMethodParams.VIRTUAL_HOST;
-    static public String USE_EXPECT_CONTINUE = HttpMethodParams.USE_EXPECT_CONTINUE;
-    static public String STRICT_TRANSFER_ENCODING = HttpMethodParams.STRICT_TRANSFER_ENCODING;
-    static public String HTTP_ELEMENT_CHARSET = HttpMethodParams.HTTP_ELEMENT_CHARSET;
-    static public String HTTP_CONTENT_CHARSET = HttpMethodParams.HTTP_CONTENT_CHARSET;
+    static public String ALLOW_CIRCULAR_REDIRECTS = AllClientPNames.ALLOW_CIRCULAR_REDIRECTS;
+    static public String MAX_REDIRECTS = AllClientPNames.MAX_REDIRECTS;
+    static public String USER_AGENT = AllClientPNames.USER_AGENT;
+    static public String PROTOCOL_VERSION = AllClientPNames.PROTOCOL_VERSION;
+    static public String VIRTUAL_HOST = AllClientPNames.VIRTUAL_HOST;
+    static public String USE_EXPECT_CONTINUE = AllClientPNames.USE_EXPECT_CONTINUE;
+    static public String STRICT_TRANSFER_ENCODING = AllClientPNames.STRICT_TRANSFER_ENCODING;
+    static public String HTTP_ELEMENT_CHARSET = AllClientPNames.HTTP_ELEMENT_CHARSET;
+    static public String HTTP_CONTENT_CHARSET = AllClientPNames.HTTP_CONTENT_CHARSET;
 
     /*fix:*/
     static public String HTTP_CONNECTION = "<undefined>";
@@ -131,8 +142,8 @@ public class HTTPSession
 
     static class Proxy
     {
-        String host = null;
-        int port = -1;
+        public String host = null;
+        public int port = -1;
     }
 
     static enum Methods
@@ -151,18 +162,62 @@ public class HTTPSession
         }
     }
 
-    // We need more powerful protocol registry.
-    static class ProtocolEntry
+    // Define a Retry Handler that supports specifiable retries
+    // and is optionally verbose.
+    static public class RetryHandler
+        implements org.apache.http.client.HttpRequestRetryHandler
     {
-        public String protocol = null;
-        public int port = 0;
-        public Protocol handler;
+        static final int DFALTRETRIES = 5;
+        static int retries = DFALTRETRIES;
+        static boolean verbose = false;
 
-        public ProtocolEntry(String protocol, int port, Protocol handler)
+        public RetryHandler()
         {
-            this.protocol = protocol;
-            this.port = port;
-            this.handler = handler;
+        }
+
+	public boolean
+	retryRequest(IOException exception,
+                     int executionCount,
+                     HttpContext context)
+        {
+            if(verbose) {
+                HTTPSession.log.debug(String.format("Retry: count=%d exception=%s\n", executionCount, exception.toString()));
+            }
+            if(executionCount >= retries)
+                return false;
+            if((exception instanceof InterruptedIOException) // Timeout
+                || (exception instanceof UnknownHostException)
+                || (exception instanceof ConnectException) // connection refused
+                || (exception instanceof SSLException)) // ssl handshake problem
+                return false;
+            HttpRequest request
+                = (HttpRequest) context.getAttribute(ExecutionContext.HTTP_REQUEST);
+            boolean idempotent = !(request instanceof HttpEntityEnclosingRequest);
+            if(idempotent) // Retry if the request is considered idempotent
+                return true;
+
+            return false;
+        }
+
+        static public synchronized int getRetries()
+        {
+            return RetryHandler.retries;
+        }
+
+        static public synchronized void setRetries(int retries)
+        {
+            if(retries > 0)
+                RetryHandler.retries = retries;
+        }
+
+        static public synchronized boolean getVerbose()
+        {
+            return RetryHandler.verbose;
+        }
+
+        static public synchronized void setVerbose(boolean tf)
+        {
+            RetryHandler.verbose = tf;
         }
     }
 
@@ -172,9 +227,7 @@ public class HTTPSession
     static public org.slf4j.Logger log
         = org.slf4j.LoggerFactory.getLogger(HTTPSession.class);
 
-    static MultiThreadedHttpConnectionManager connmgr;
-
-    //fix: protected static SchemeRegistry schemes;
+    static PoolingClientConnectionManager connmgr;
 
     static String globalAgent = "/NetcdfJava/HttpClient3";
     static int threadcount = DFALTTHREADCOUNT;
@@ -182,23 +235,18 @@ public class HTTPSession
     static int globalSoTimeout = 0;
     static int globalConnectionTimeout = 0;
     static Proxy globalproxy = null;
-    static List<ProtocolEntry> registry;
+    static int localSoTimeout = 0;
+    static int localConnectionTimeout = 0;
 
     static {
-        connmgr = new MultiThreadedHttpConnectionManager();
+        connmgr = new PoolingClientConnectionManager();
+        connmgr.getSchemeRegistry().register(
+            new Scheme("https", 8443,
+                new EasySSLProtocolSocketFactory()));
+        connmgr.getSchemeRegistry().register(
+            new Scheme("https", 443,
+                new EasySSLProtocolSocketFactory()));
         setGlobalThreadCount(DFALTTHREADCOUNT);
-        registry = new ArrayList<ProtocolEntry>();
-        // Fill in the registry for our various https ports
-        // allow self-signed certificates
-        registerProtocol("https", 0,
-            new Protocol("https",
-                new EasySSLProtocolSocketFactory(),
-                443)); // default
-        registerProtocol("https", 8443,
-            new Protocol("https",
-                new EasySSLProtocolSocketFactory(),
-                8443)); // std tomcat https entry
-
         setGlobalConnectionTimeout(DFALTTIMEOUT);
         setGlobalSoTimeout(DFALTTIMEOUT);
         getGlobalProxyD(); // get info from -D if possible
@@ -220,8 +268,8 @@ public class HTTPSession
 
     static public void setGlobalThreadCount(int nthreads)
     {
-        connmgr.getParams().setMaxTotalConnections(nthreads);
-        connmgr.getParams().setDefaultMaxConnectionsPerHost(nthreads);
+        connmgr.setMaxTotal(nthreads);
+        connmgr.setDefaultMaxPerRoute(nthreads);
     }
 
     // Alias
@@ -232,86 +280,22 @@ public class HTTPSession
 
     static public int getGlobalThreadCount()
     {
-        return connmgr.getParams().getMaxTotalConnections();
+        return connmgr.getMaxTotal();
     }
 
 
-    static public Cookie[] getGlobalCookies()
+    static public List<Cookie> getGlobalCookies()
     {
-        HttpClient client = new HttpClient(connmgr);
-        Cookie[] cookies = client.getState().getCookies();
+        AbstractHttpClient client = new DefaultHttpClient(connmgr);
+        List<Cookie> cookies = client.getCookieStore().getCookies();
         return cookies;
-    }
-
-    // Replace org.apache.commons.httpclient.protocol.Protocol.register()
-    // This is done because the handler must depend on both the protocol
-    // (e.g https) as well as the port. One hopes this is fixed
-    // in apache httpclient v4.
-
-    static synchronized public void
-    registerProtocol(String protocol, int port, Protocol handler)
-        throws IllegalArgumentException
-    {
-        if(protocol == null)
-            throw new IllegalArgumentException();
-        if(port < 0) port = 0;
-        // port == 0 is wildcard, so use standard Protocol registry
-        if(port == 0) {// look to the standard protocol registry
-            if(handler == null)
-                Protocol.unregisterProtocol(protocol);
-            else
-                Protocol.registerProtocol(protocol, handler);
-        } else {
-            for(int i = 0;i < registry.size();i++) {
-                ProtocolEntry entry = registry.get(i);
-                if(!entry.protocol.equals(protocol)) continue;
-                if(entry.port != port) continue;
-                if(handler == null)
-                    registry.remove(i); //delete
-                else
-                    entry.handler = handler; // replace
-                return;
-            }
-            registry.add(new ProtocolEntry(protocol, port, handler));
-        }
-    }
-
-    static synchronized public Protocol
-    getProtocol(String protocol, int port)
-        throws IllegalArgumentException, IllegalStateException
-    {
-        ProtocolEntry entry = null;
-        if(protocol == null)
-            throw new IllegalArgumentException();
-        if(port < 0) port = 0;
-        // port == 0 is wildcard
-        if(port == 0) {
-            return Protocol.getProtocol(protocol); // may throw exception
-        }
-        for(int i = 0;i < registry.size();i++) {
-            entry = registry.get(i);
-            if(!entry.protocol.equals(protocol)) continue;
-            if(entry.port != port) continue;
-            return entry.handler;
-        }
-        // Retry with port 0
-        Protocol p = Protocol.getProtocol(protocol); // may throw exception
-        if(p == null)
-            throw new IllegalStateException(); // no such protocol X port
-        return p;
     }
 
     // Timeouts
 
-    static public void setConnectionManagerTimeout(int timeout)
-    {
-        setGlobalConnectionTimeout(timeout);
-    }
-
     static public void setGlobalConnectionTimeout(int timeout)
     {
-        connmgr.getParams().setConnectionTimeout(timeout);
-
+        if(timeout >= 0) globalConnectionTimeout = timeout;
     }
 
     static public void setGlobalSoTimeout(int timeout)
@@ -400,6 +384,19 @@ public class HTTPSession
         defineCredentialsProvider(scheme, HTTPAuthStore.ANY_URL, provider);
     }
 
+    static public int
+    getRetryCount()
+    {
+        return RetryHandler.getRetries();
+    }
+
+    static public void
+    setRetryCount(int count)
+    {
+        RetryHandler.setRetries(count);
+    }
+
+
     // Static Utilitiy functions
 
     static String
@@ -473,8 +470,8 @@ public class HTTPSession
     static public String
     getUrlAsString(String url) throws HTTPException
     {
-        HTTPSession session = new HTTPSession(url);
-        HTTPMethod m = HTTPMethod.Get(session);
+        HTTPSession session = HTTPFactory.newSession(url);
+        HTTPMethod m = HTTPFactory.Get(session);
         int status = m.execute();
         String content = null;
         if(status == 200) {
@@ -487,8 +484,8 @@ public class HTTPSession
     static public int
     putUrlAsString(String content, String url) throws HTTPException
     {
-        HTTPSession session = new HTTPSession(url);
-        HTTPMethod m = HTTPMethod.Put(session);
+        HTTPSession session = HTTPFactory.newSession(url);
+        HTTPMethod m = HTTPFactory.Put(session);
         m.setRequestContentAsString(content);
         int status = m.execute();
         m.close();
@@ -584,9 +581,9 @@ public class HTTPSession
     //////////////////////////////////////////////////
     // Instance variables
 
-    HttpClient sessionClient = null;
+    AbstractHttpClient sessionClient = null;
     List<ucar.nc2.util.net.HTTPMethod> methodList = new Vector<HTTPMethod>();
-    HttpState context = null;
+    HttpContext context = null;
     String identifier = "Session";
     String useragent = null;
     String legalurl = null;
@@ -612,21 +609,21 @@ public class HTTPSession
     {
         this.legalurl = legalurl;
         try {
-            sessionClient = new HttpClient(connmgr);
-            HttpClientParams clientparams = sessionClient.getParams();
+            sessionClient = new DefaultHttpClient(connmgr);
+            HttpParams clientparams = sessionClient.getParams();
 
             // Allow (circular) redirects
             clientparams.setParameter(ALLOW_CIRCULAR_REDIRECTS, true);
             clientparams.setParameter(MAX_REDIRECTS, 25);
 
             if(globalSoTimeout > 0)
-                setSoTimeout(globalSoTimeout);
+                clientparams.setParameter(AllClientPNames.SO_TIMEOUT, globalSoTimeout);
 
             if(globalConnectionTimeout > 0)
-                setConnectionTimeout(globalConnectionTimeout);
+                clientparams.setParameter(AllClientPNames.CONN_MANAGER_TIMEOUT, (long) globalConnectionTimeout);
 
             if(globalAgent != null)
-                setUserAgent(globalAgent); // May get overridden by setUserAgent
+                clientparams.setParameter(AllClientPNames.USER_AGENT, globalAgent);
 
             setAuthenticationPreemptive(globalauthpreemptive);
 
@@ -653,22 +650,20 @@ public class HTTPSession
 
     public void setAuthenticationPreemptive(boolean tf)
     {
-        if(sessionClient != null)
-            sessionClient.getParams().setAuthenticationPreemptive(tf);
+        //fix if(sessionClient != null)
+        //sessionClient.getParams().setAuthenticationPreemptive(tf);
     }
 
     public void setSoTimeout(int timeout)
     {
-        sessionClient.getParams().setSoTimeout(timeout);
+        if(timeout >= 0) localSoTimeout = timeout;
     }
 
     public void setConnectionTimeout(int timeout)
     {
-        sessionClient.setConnectionTimeout(timeout);
+        if(timeout >= 0) localConnectionTimeout = timeout;
     }
 
-
-    //fix: public void setStateX(HttpState cxt) {sessionState = cxt;}
 
     /**
      * Close the session. This implies closing
@@ -677,25 +672,26 @@ public class HTTPSession
 
     synchronized public void close()
     {
-	if(closed)
-	    return; // multiple calls ok
-	while(methodList.size() > 0) {
-           HTTPMethod m = methodList.get(0);
-           m.close(); // forcibly close; will invoke removemethod().
-       }
-       closed = true;
+        if(closed)
+            return; // multiple calls ok
+        while(methodList.size() > 0) {
+            HTTPMethod m = methodList.get(0);
+            m.close(); // forcibly close; will invoke removemethod().
+        }
+        closed = true;
     }
 
     public String getCookiePolicy()
     {
-        return sessionClient == null ? null : sessionClient.getParams().getCookiePolicy();
+        return sessionClient == null ? null
+            : (String) sessionClient.getParams().getParameter(AllClientPNames.COOKIE_POLICY);
     }
 
-    public Cookie[] getCookies()
+    public List<Cookie> getCookies()
     {
         if(sessionClient == null)
             return null;
-        Cookie[] cookies = sessionClient.getState().getCookies();
+        List<Cookie> cookies = sessionClient.getCookieStore().getCookies();
         return cookies;
     }
 
@@ -712,16 +708,16 @@ public class HTTPSession
 
     public void setMaxRedirects(int n)
     {
-        HttpClientParams clientparams = sessionClient.getParams();
+        HttpParams clientparams = sessionClient.getParams();
         clientparams.setParameter(MAX_REDIRECTS, n);
     }
 
-    public void setContext(HttpState cxt)
+    public void setContext(HttpContext cxt)
     {
         context = cxt;
     }
 
-    public HttpState getContext()
+    public HttpContext getContext()
     {
         return context;
     }
@@ -729,8 +725,8 @@ public class HTTPSession
 
     public void clearState()
     {
-        sessionClient.getState().clearCookies();
-        sessionClient.getState().clearCredentials();
+        sessionClient.getCredentialsProvider().clear();
+        sessionClient.getCookieStore().clear();
     }
 
 
@@ -742,8 +738,10 @@ public class HTTPSession
     setProxy(Proxy proxy)
     {
         if(sessionClient == null) return;
-        if(proxy != null && proxy.host != null)
-            sessionClient.getHostConfiguration().setProxy(proxy.host, proxy.port);
+        if(proxy != null && proxy.host != null) {
+            HttpHost httpproxy = new HttpHost(proxy.host, proxy.port);
+            sessionClient.getParams().setParameter(ConnRoutePNames.DEFAULT_PROXY, httpproxy);
+        }
     }
 
     void
@@ -840,7 +838,7 @@ public class HTTPSession
             sessionList.clear();
             // Rebuild the connection manager
             connmgr.shutdown();
-            connmgr = new MultiThreadedHttpConnectionManager();
+            connmgr = new PoolingClientConnectionManager();
             setGlobalThreadCount(DFALTTHREADCOUNT);
         }
     }

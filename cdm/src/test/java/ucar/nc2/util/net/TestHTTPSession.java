@@ -71,14 +71,14 @@ public class TestHTTPSession extends UnitTestCommon
     System.out.println("*** URL: " + url);
     System.out.println("Test: HTTPSession.setGlobalUserAgent(" + globalagent + ")");
     HTTPSession.setGlobalUserAgent(globalagent);
-    HTTPSession session = new HTTPSession(url);
-    HTTPMethod method = HTTPMethod.Get(session);
+    HTTPSession session = HTTPFactory.newSession(url);
+    HTTPMethod method = HTTPFactory.Get(session);
     method.execute();
     System.out.println("Validate by examining localserver log output");
 
     System.out.println("Test: HTTPSession.setUserAgent(" + sessionagent + ")");
     session.setUserAgent(sessionagent);
-    method = HTTPMethod.Get(session);
+    method = HTTPFactory.Get(session);
     method.execute();
     System.out.println("Validate by examining localserver log output");
 
