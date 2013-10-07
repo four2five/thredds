@@ -434,6 +434,74 @@ public String NC_check_name(String name) {
     this.fill = fill;
   }
 
+  /**
+   * query to see if this IOSP supports the getLocalityInformation() function
+   *
+   * @return a boolean indicating that this IOSP supports the getLocalityInformation() call
+   */
+  public boolean supportsLocalityInformation() { 
+    return true;
+  }
+
+  /**
+   * Returns an ArrayLong with each entry corresponding to the offset in the filestream
+   * of the same data cell in the section arguement to the function
+   *
+   * @param v2 the variable to get the data from
+   * @param section the record range to read
+   * @return an ArrayLong object that's the shape as the section arguement
+   * @throws InvalidRangeException on error
+   * @throws IOException on error
+   */
+  public ArrayLong getLocalityInformation(ucar.nc2.Variable v2, Section section)
+         throws InvalidRangeException, IOException {
+
+    // An array to hold the offsets that will be returned
+    ArrayLong array = new ArrayLong(section.getShape());
+
+    // Index into the results array
+    Index aIndex = array.getIndex();
+
+    // dataSize is used to increment the offsets within a given
+    // chunk appropriately
+    DataType type = v2.getDataType();
+    int dataSize = type.getSize();
+
+    Layout layout = getLayout(v2, section);
+
+    // iterate over all the chunks in the calculated Layout
+    while( layout.hasNext() ){
+      Layout.Chunk chunk = layout.next();
+
+      // iterate over the elements in this chunk
+      for( int i = 0; i < chunk.getNelems(); i++){
+        // write the offset into the results array, then iterate the index
+        array.setLong(aIndex, chunk.getSrcPos() + (i * dataSize));
+        aIndex.incr();
+      }
+    }
+
+    return array;
+  }
+
+  /**
+   * Returns a Layout object for use by an N3iosp object
+   *
+   * @param v2 the variable to get the layout information for
+   * @param section the record range to read
+   * @return a Layout corresponding to the Section requested
+   * @throws IOException on error
+   */
+  private Layout getLayout(Variable v2, Section section) throws InvalidRangeException {
+    N3header.Vinfo vinfo = (N3header.Vinfo) v2.getSPobject();
+
+    Layout layout = (!v2.isUnlimited()) ? new LayoutRegular(vinfo.begin, v2.getElementSize(), v2.getShape(), section) 
+      : new LayoutRegularSegmented(vinfo.begin, v2.getElementSize(), header.recsize, v2.getShape(), section);
+
+    return layout;
+  }
+
+  /////////////////////////////////////////////////////////////////////////////
   /////////////////////////////////////////////////////////////////////////////
   // data reading
 
@@ -448,9 +516,7 @@ public String NC_check_name(String name) {
 
     N3header.Vinfo vinfo = (N3header.Vinfo) v2.getSPobject();
     DataType dataType = v2.getDataType();
-
-    Layout layout = (!v2.isUnlimited()) ? new LayoutRegular(vinfo.begin, v2.getElementSize(), v2.getShape(), section) :
-      new LayoutRegularSegmented(vinfo.begin, v2.getElementSize(), header.recsize, v2.getShape(), section);
+    Layout layout = getLayout(v2, section);
 
     if (layout.getTotalNelems() == 0) {
       return Array.factory(dataType.getPrimitiveClassType(), section.getShape());
@@ -594,9 +660,7 @@ public String NC_check_name(String name) {
 
     N3header.Vinfo vinfo = (N3header.Vinfo) v2.getSPobject();
     DataType dataType = v2.getDataType();
-
-    Layout layout = (!v2.isUnlimited()) ? new LayoutRegular(vinfo.begin, v2.getElementSize(), v2.getShape(), section) :
-      new LayoutRegularSegmented(vinfo.begin, v2.getElementSize(), header.recsize, v2.getShape(), section);
+    Layout layout = getLayout(v2, section);
 
     return readData(layout, dataType, channel);
   }
@@ -675,7 +739,7 @@ public String NC_check_name(String name) {
   // write
 
   public void writeData(Variable v2, Section section, Array values) throws java.io.IOException, InvalidRangeException {
-    N3header.Vinfo vinfo = (N3header.Vinfo) v2.getSPobject();
+    //N3header.Vinfo vinfo = (N3header.Vinfo) v2.getSPobject();
     DataType dataType = v2.getDataType();
 
     if (v2.isUnlimited()) {
@@ -687,8 +751,7 @@ public String NC_check_name(String name) {
       writeRecordData((Structure) v2, section, values);
 
     } else {
-      Layout layout = (!v2.isUnlimited()) ? new LayoutRegular(vinfo.begin, v2.getElementSize(), v2.getShape(), section) :
-        new LayoutRegularSegmented(vinfo.begin, v2.getElementSize(), header.recsize, v2.getShape(), section);
+      Layout layout = getLayout(v2, section);
       writeData(values, layout, dataType);
     }
   }

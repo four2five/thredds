@@ -177,4 +177,13 @@ public abstract class AbstractIOServiceProvider implements IOServiceProvider {
     return "N/A";
   }
 
+  public boolean supportsLocalityInformation() {
+    return false;
+  }
+
+  public ArrayLong getLocalityInformation(ucar.nc2.Variable v2, Section section)
+         throws InvalidRangeException, IOException {
+		return null;
+	}
+
 }

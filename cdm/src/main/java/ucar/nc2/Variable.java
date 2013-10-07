@@ -623,6 +623,40 @@ public class Variable extends CDMNode implements VariableIF, ProxyReader {
     return read(new Section(origin, shape));
   }
 
+  /*
+   * Return an ArrayLong structure with the same shape as the shape arguement
+   * where each entry is the offset in the byte-stream where the corresponding
+   * data element begins
+   * @param origin int array specifying the starting index. If null, assume all zeroes.
+   * @param shape  int array specifying the extents in each dimension.
+   *               This becomes the shape of the returned Array.
+   * @return a memory-resdient array of longs with offsets or -1 if the offset
+   *                for the corresponding cell can't be determined
+   */
+  public ArrayLong getLocalityInformation(int[] origin, int[] shape) throws IOException, InvalidRangeException {
+    return ncfile.getLocalityInformation( this, new Section(origin, shape));
+  }
+
+  public boolean supportsLocalityInformation() throws IOException {
+    return ncfile.supportsLocalityInformation();
+  }
+
+  /**
+   * Return an ArrayLong structure with the same shape as the shape arguement
+   * where each entry is the offset in the byte-stream where the corresponding
+   * data element begins.
+   *
+   * @param section list of Range specifying the section of data to read.
+   *                Must be null or same rank as variable.
+   *                If list is null, assume all data.
+   *                Each Range corresponds to a Dimension. If the Range object is null, it means use the entire dimension.
+   * @return a memory-resdient array of longs with offsets or -1 if the offset
+   *                for the corresponding cell can't be determined
+   */
+  public ArrayLong getLocalityInformation(Section section) throws IOException, InvalidRangeException {
+    return ncfile.getLocalityInformation(this, section);
+  }
+
   /**
    * Read data section specified by a "section selector", and return a memory resident Array. Uses
    * Fortran 90 array section syntax.

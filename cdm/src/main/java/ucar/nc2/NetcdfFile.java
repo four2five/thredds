@@ -367,6 +367,10 @@ public class NetcdfFile implements ucar.nc2.util.cache.FileCacheable {
     return open(location, null);
   }
 
+  public static NetcdfFile open(ucar.unidata.io.RandomAccessFile raf, String location) throws IOException {
+    return open(raf, location, null, null);
+  }
+
   /**
    * Open an existing file (read only), with option of cancelling.
    *
@@ -1090,6 +1094,19 @@ public class NetcdfFile implements ucar.nc2.util.cache.FileCacheable {
    */
   public boolean hasUnlimitedDimension() {
     return getUnlimitedDimension() != null;
+  }
+
+  /**
+   * Return true if this file supports querying for locality information.
+   * @return if the file can return locality information
+   * @throws IOException if there is not an IOServiceProvider set
+   */
+  public boolean supportsLocalityInformation() throws IOException {
+    if (spi == null) {
+      throw new IOException("spi is null");
+    }
+
+    return spi.supportsLocalityInformation();
   }
 
   /**
@@ -2396,6 +2413,17 @@ public class NetcdfFile implements ucar.nc2.util.cache.FileCacheable {
       sbuff.append(".");
     }
     sbuff.append(EscapeStrings.backslashEscape(n.getShortName(), reserved));
+  }
+
+  public ArrayLong getLocalityInformation(ucar.nc2.Variable v, Section ranges) 
+         throws IOException, InvalidRangeException {
+    if (spi == null) {
+      throw new IOException("spi is null");
+    } else if (!spi.supportsLocalityInformation()) { 
+      throw new IOException("IOSP " + spi.getFileTypeId() + " does not support getLocalityInformation()");
+    }
+
+    return spi.getLocalityInformation(v, ranges);
   }
 
   /**

@@ -132,6 +132,31 @@ public interface IOServiceProvider {
   public ucar.ma2.Array readSection(ParsedSectionSpec cer) throws IOException, InvalidRangeException;
 
   /**
+   * Calculate the offset in the underlying byte-stream for each value
+   * indicated by the section and variable objects
+   *
+   * @param v2 a top-level Variable
+   * @param section the section of data to read.
+   *   There must be a Range for each Dimension in the variable, in order.
+   *   Note: no nulls allowed. IOSP may not modify.
+   * @return an ArrayLong the same shape as section where each entry is the 
+   *         offset of the corresponding data element
+   * @throws java.io.IOException if read error or if this IOSP doesn't 
+   *                             support getLocalityInformation()
+   * @throws ucar.ma2.InvalidRangeException if invalid section
+   */
+  public ucar.ma2.ArrayLong getLocalityInformation(ucar.nc2.Variable v2, Section section) 
+         throws IOException, InvalidRangeException;
+
+  /**
+   * Determine if this IOServiceProvider supports the getLocalityInformation() function
+   *
+   * @return a boolean indicating if getLocalityInformation is supported by
+   *         this IOServiceProvider
+   */
+  public boolean supportsLocalityInformation() throws IOException;
+
+  /**
    * Get the structure iterator. iosps with top level sequences must override
    *
    * @param s          the Structure
